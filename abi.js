@@ -1,4 +1,88 @@
-window.SKILLVAULT_ABI = [
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>SkillVault | Monad Builders</title>
+  <script src="https://cdn.jsdelivr.net/npm/ethers@6.10.0/dist/ethers.min.js"></script>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    body {
+      background: radial-gradient(circle at 10% 20%, #000, #0a0a0a);
+      color: #e2e2e2;
+      font-family: 'Inter', sans-serif;
+    }
+    .card {
+      background: #121212;
+      border: 1px solid #2b2b2b;
+      border-radius: 1rem;
+      transition: all 0.25s ease;
+    }
+    .card:hover {
+      transform: scale(1.01);
+      border-color: #4ae0d0;
+    }
+    .btn {
+      background: #00ffd0;
+      color: #000;
+      font-weight: 600;
+      border-radius: 0.5rem;
+      padding: 0.5rem 1rem;
+      transition: 0.2s ease;
+    }
+    .btn:hover {
+      background: #1effe0;
+    }
+  </style>
+</head>
+
+<body class="min-h-screen p-6 flex flex-col items-center">
+  <header class="flex justify-between w-full max-w-5xl mb-10 items-center">
+    <h1 class="text-3xl font-bold text-cyan-400">SkillVault 🌐</h1>
+    <button id="connectBtn" class="btn">Connect Wallet</button>
+  </header>
+
+  <main class="w-full max-w-5xl space-y-10">
+    <!-- Profile Section -->
+    <section id="profileSection" class="card p-6 hidden">
+      <h2 class="text-xl font-semibold mb-4">Your Profile</h2>
+      <div id="profileDetails" class="text-gray-300">No profile found.</div>
+      <div class="mt-3">
+        <label class="block mb-1">Upload PFP:</label>
+        <input type="file" id="pfpFile" accept="image/*"
+          class="bg-[#1a1a1a] border border-gray-700 rounded-lg p-2 w-full" />
+      </div>
+      <button id="createProfileBtn" class="btn mt-4">Create / Update Profile</button>
+    </section>
+
+    <!-- Skills Section -->
+    <section id="skillsSection" class="card p-6 hidden">
+      <h2 class="text-xl font-semibold mb-4">Your Skills</h2>
+      <div id="skillsList" class="space-y-3"></div>
+      <button id="addSkillBtn" class="btn mt-6">Add New Skill</button>
+    </section>
+
+    <!-- Builder Endorse Section -->
+    <section id="buildersSection" class="card p-6">
+      <h2 class="text-xl font-semibold mb-4">Endorse a Builder</h2>
+      <input id="builderAddress" class="w-full bg-[#1a1a1a] border border-gray-700 rounded-lg p-2 mb-3"
+        placeholder="Enter builder address" />
+      <button id="loadBuilderSkillsBtn" class="btn">Load Builder Skills</button>
+      <div id="builderSkillsList" class="mt-6 space-y-3"></div>
+    </section>
+  </main>
+
+  <script>
+    // --- Config ---
+    const CONTRACT_ADDRESS = "0x38238FBf2d6D515Af42ee17452b87cDBFc517aD1";
+    const MONAD_CHAIN_ID = "0x279F"; // 10143 decimal
+    const MONAD_RPC = "https://testnet-rpc.monad.xyz";
+    const EXPLORER = "https://testnet.monadexplorer.com/";
+
+    let provider, signer, contract, userAddress;
+
+    // --- ABI ---
+    window.SKILLVAULT_ABI = [
 	{
 		"anonymous": false,
 		"inputs": [
@@ -333,3 +417,181 @@ window.SKILLVAULT_ABI = [
 		"type": "function"
 	}
 ];
+
+    // --- Wallet Connection ---
+    async function connectWallet() {
+      if (!window.ethereum) return alert("Please install MetaMask (Monad Testnet).");
+
+      try {
+        await window.ethereum.request({
+          method: "wallet_switchEthereumChain",
+          params: [{ chainId: MONAD_CHAIN_ID }]
+        });
+      } catch (err) {
+        if (err.code === 4902) {
+          await window.ethereum.request({
+            method: "wallet_addEthereumChain",
+            params: [{
+              chainId: MONAD_CHAIN_ID,
+              chainName: "Monad Testnet",
+              nativeCurrency: { name: "MON", symbol: "MON", decimals: 18 },
+              rpcUrls: [MONAD_RPC],
+              blockExplorerUrls: [EXPLORER]
+            }]
+          });
+        } else {
+          console.error(err);
+          return alert("Failed to connect to Monad Testnet.");
+        }
+      }
+
+      provider = new ethers.BrowserProvider(window.ethereum);
+      signer = await provider.getSigner();
+      userAddress = await signer.getAddress();
+      contract = new ethers.Contract(CONTRACT_ADDRESS, window.SKILLVAULT_ABI, signer);
+
+      document.getElementById("connectBtn").innerText =
+        `${userAddress.slice(0, 6)}...${userAddress.slice(-4)}`;
+
+      document.getElementById("profileSection").classList.remove("hidden");
+      document.getElementById("skillsSection").classList.remove("hidden");
+
+      await loadProfile();
+      await loadSkills();
+    }
+
+    // --- IPFS Upload ---
+    async function uploadToIPFS(file) {
+      const formData = new FormData();
+      formData.append("file", file);
+
+      const res = await fetch("https://ipfs.infura.io:5001/api/v0/add", {
+        method: "POST",
+        body: formData
+      });
+
+      if (!res.ok) throw new Error("Failed to upload file to IPFS");
+      const data = await res.json();
+      return `ipfs://${data.Hash}`;
+    }
+
+    // --- Profile Logic ---
+    async function createProfile() {
+      const name = prompt("Enter your display name:");
+      if (!name) return alert("Name required.");
+      const bio = prompt("Enter a short bio:") || "";
+
+      let pfpURI = "";
+      const fileInput = document.getElementById("pfpFile");
+      if (fileInput.files.length > 0) {
+        const file = fileInput.files[0];
+        pfpURI = await uploadToIPFS(file);
+      }
+
+      const tx = await contract.createProfile(name, bio, pfpURI);
+      await tx.wait();
+      alert("Profile created / updated successfully!");
+      await loadProfile();
+    }
+
+    async function loadProfile() {
+      const p = await contract.profiles(userAddress);
+      const pfpURL = p.pfpURI ? p.pfpURI.replace("ipfs://", "https://ipfs.io/ipfs/") : "";
+
+      document.getElementById("profileDetails").innerHTML = `
+        <div class="flex items-center space-x-4">
+          ${pfpURL ? `<img src="${pfpURL}" alt="pfp" class="w-12 h-12 rounded-full"/>` : ""}
+          <div>
+            <div><b>Name:</b> ${p.displayName || "N/A"}</div>
+            <div><b>Bio:</b> ${p.bio || "N/A"}</div>
+            <div><b>Total Endorsements:</b> ${ethers.formatEther(p.totalEndorsements || 0)} MON</div>
+          </div>
+        </div>`;
+    }
+
+    // --- Skills Logic ---
+    async function loadSkills() {
+      const s = await contract.getSkills(userAddress);
+      const container = document.getElementById("skillsList");
+      container.innerHTML = "";
+
+      if (s.length === 0) {
+        container.innerHTML = `<div class="text-gray-500">No skills yet.</div>`;
+        return;
+      }
+
+      s.forEach((sk) => {
+        const div = document.createElement("div");
+        div.className = "p-3 bg-[#111] rounded-lg flex justify-between";
+        div.innerHTML = `
+          <div>
+            <div class="font-semibold text-cyan-400">${sk.name}</div>
+            <div class="text-sm text-gray-400">${sk.category}</div>
+            ${sk.proofURI ? `<a href="${sk.proofURI}" target="_blank" class="text-xs text-cyan-500 underline">${sk.proofURI}</a>` : ""}
+          </div>
+          <div>Cred: ${ethers.formatEther(sk.credibility || 0)} MON</div>
+        `;
+        container.appendChild(div);
+      });
+    }
+
+    async function addSkill() {
+      const name = prompt("Skill name:");
+      if (!name) return;
+      const cat = prompt("Category:") || "General";
+      const proof = prompt("Proof URI (optional):") || "";
+      const tx = await contract.addSkill(name, cat, proof);
+      await tx.wait();
+      alert("Skill added!");
+      await loadSkills();
+    }
+
+    // --- Endorsement Logic ---
+    async function loadBuilderSkills() {
+      const addr = document.getElementById("builderAddress").value.trim();
+      if (!ethers.isAddress(addr)) return alert("Invalid builder address");
+
+      const s = await contract.getSkills(addr);
+      const container = document.getElementById("builderSkillsList");
+      container.innerHTML = "";
+
+      if (s.length === 0) {
+        container.innerHTML = `<div class="text-gray-500">This builder has no skills yet.</div>`;
+        return;
+      }
+
+      s.forEach((sk, i) => {
+        const div = document.createElement("div");
+        div.className = "p-3 bg-[#111] rounded-lg flex justify-between items-center";
+        div.innerHTML = `
+          <div>
+            <div class="font-semibold text-cyan-400">${sk.name}</div>
+            <div class="text-sm text-gray-400">${sk.category}</div>
+          </div>
+          <button class="btn endorseBtn" data-addr="${addr}" data-id="${i}">Endorse</button>
+        `;
+        container.appendChild(div);
+      });
+
+      document.querySelectorAll(".endorseBtn").forEach(btn => {
+        btn.onclick = async (e) => {
+          const addr = e.target.dataset.addr;
+          const id = e.target.dataset.id;
+          const amt = prompt("Enter MON amount to endorse (e.g., 0.01):");
+          if (!amt || isNaN(amt)) return alert("Invalid amount");
+
+          const tx = await contract.endorseSkill(addr, id, { value: ethers.parseEther(amt) });
+          await tx.wait();
+          alert("Endorsement successful!");
+          await loadBuilderSkills();
+        };
+      });
+    }
+
+    document.getElementById("connectBtn").onclick = connectWallet;
+    document.getElementById("createProfileBtn").onclick = createProfile;
+    document.getElementById("addSkillBtn").onclick = addSkill;
+    document.getElementById("loadBuilderSkillsBtn").onclick = loadBuilderSkills;
+  </script>
+</body>
+</html>
